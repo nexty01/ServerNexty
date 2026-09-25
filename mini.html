@@ -739,7 +739,7 @@
 
 <div id="toast">CODE COPIED!</div>
 
-<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script>
 /* ---------------- Boot sequence ---------------- */
 const bootLines = [
@@ -825,7 +825,17 @@ const allServers = [
   { id: 'server1', name: 'NEXTY NODE 01' },
   { id: 'server2', name: 'NEXTY NODE 02' }
 ];
+let serverUrlMap = {};
 let selectedServer = null;
+
+async function loadServerUrls(){
+  try{
+    const res = await axios.get('/servers');
+    (res.data.servers || []).forEach(s => { serverUrlMap[s.id] = s.url; });
+  }catch(err){
+    console.error('Failed to load server URLs', err);
+  }
+}
 
 const serverSelect = document.getElementById('serverSelect');
 const serverPanel = document.getElementById('serverPanel');
@@ -859,6 +869,8 @@ async function selectServer(serverId){
   serverSelectStats.innerHTML = 'checking node status...';
   requestBtn.disabled = true;
   renderServerPanel();
+  if(Object.keys(serverUrlMap).length === 0) await loadServerUrls();
+  connectSocketForServer(serverId);
   await checkServerStatus(serverId);
   serverPanel.classList.remove('show');
 }
@@ -897,13 +909,71 @@ async function checkServerStatus(serverId){
   }
 }
 
-document.addEventListener('DOMContentLoaded', renderServerPanel);
+document.addEventListener('DOMContentLoaded', () => {
+  renderServerPanel();
+  loadServerUrls();
+});
 
 /* ---------------- Pairing logic ---------------- */
-const socket = io();
+let socket = null;
 const phoneInput = document.getElementById('phone');
 const codeWrap = document.getElementById('codeWrap');
 const pairingCode = document.getElementById('pairingCode');
+
+function connectSocketForServer(serverId){
+  const url = serverUrlMap[serverId];
+  if(!url){
+    setStatus('Server URL not loaded yet. Try again in a moment.', 'error');
+    return false;
+  }
+  if(socket){
+    socket.removeAllListeners();
+    socket.disconnect();
+  }
+  socket = io(url, { transports: ['websocket', 'polling'] });
+  bindSocketEvents();
+  return true;
+}
+
+function bindSocketEvents(){
+  socket.on('pairing-code', (code)=>{
+    requestBtn.disabled = false;
+    requestBtn.classList.remove('loading');
+    requestBtn.innerHTML = '<i class="fas fa-sync-alt"></i> generate_code()';
+    setStatus('Pairing code generated. Link it in WhatsApp within 60 seconds.', 'success');
+    codeWrap.style.display = 'block';
+    pairingCode.innerText = code;
+  });
+
+  socket.on('pair-error', (msg)=>{
+    requestBtn.disabled = false;
+    requestBtn.classList.remove('loading');
+    requestBtn.innerHTML = '<i class="fas fa-sync-alt"></i> generate_code()';
+    setStatus(msg || 'Failed to generate pairing code. Try again.', 'error');
+  });
+
+  socket.on('connection-status', (status)=>{
+    if(status && status.connected){
+      pairingCode.innerText = 'LINKED';
+      pairingCode.style.color = '#10b981';
+      pairingCode.style.borderColor = '#10b981';
+      setStatus('Device linked successfully!', 'success');
+      showToast('CONNECTED SUCCESSFULLY!');
+      setTimeout(()=>location.reload(), 3000);
+    }
+  });
+
+  socket.on('stats', (data)=>{
+    if(data){
+      if(typeof data.activeSockets !== 'undefined') document.getElementById('activeSockets').innerText = data.activeSockets;
+      if(typeof data.totalUsers !== 'undefined') document.getElementById('totalUsers').innerText = data.totalUsers;
+    }
+  });
+
+  socket.on('connect_error', ()=>{
+    setStatus('Could not reach the selected node. Pick another.', 'error');
+  });
+}
 
 function copyCode(){
   const code = pairingCode.innerText;
@@ -924,48 +994,23 @@ requestBtn.addEventListener('click', ()=>{
     phoneInput.focus();
     return;
   }
+  if(!socket || !socket.connected){
+    if(!connectSocketForServer(selectedServer)) return;
+  }
   requestBtn.disabled = true;
   requestBtn.classList.add('loading');
   requestBtn.innerHTML = '<i class="fas fa-circle-notch"></i> Requesting...';
   setStatus('Sending pairing request to server...', 'warning');
 
   const userId = 'user_' + Math.random().toString(36).substr(2,9);
-  socket.emit('set-user', userId);
-  socket.emit('pair-request', { userId, number, server: selectedServer });
-});
 
-socket.on('pairing-code', (code)=>{
-  requestBtn.disabled = false;
-  requestBtn.classList.remove('loading');
-  requestBtn.innerHTML = '<i class="fas fa-sync-alt"></i> generate_code()';
-  setStatus('Pairing code generated. Link it in WhatsApp within 60 seconds.', 'success');
-  codeWrap.style.display = 'block';
-  pairingCode.innerText = code;
-});
+  const sendRequest = () => {
+    socket.emit('set-user', userId);
+    socket.emit('pair-request', { userId, number, server: selectedServer });
+  };
 
-socket.on('pair-error', (msg)=>{
-  requestBtn.disabled = false;
-  requestBtn.classList.remove('loading');
-  requestBtn.innerHTML = '<i class="fas fa-sync-alt"></i> generate_code()';
-  setStatus(msg || 'Failed to generate pairing code. Try again.', 'error');
-});
-
-socket.on('connection-status', (status)=>{
-  if(status && status.connected){
-    pairingCode.innerText = 'LINKED';
-    pairingCode.style.color = '#10b981';
-    pairingCode.style.borderColor = '#10b981';
-    setStatus('Device linked successfully!', 'success');
-    showToast('CONNECTED SUCCESSFULLY!');
-    setTimeout(()=>location.reload(), 3000);
-  }
-});
-
-socket.on('stats', (data)=>{
-  if(data){
-    if(typeof data.activeSockets !== 'undefined') document.getElementById('activeSockets').innerText = data.activeSockets;
-    if(typeof data.totalUsers !== 'undefined') document.getElementById('totalUsers').innerText = data.totalUsers;
-  }
+  if(socket.connected) sendRequest();
+  else socket.once('connect', sendRequest);
 });
 </script>
 </body>
