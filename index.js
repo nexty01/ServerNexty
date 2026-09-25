@@ -1,5 +1,3 @@
-// JawadTech
-
 const express = require('express');
 const axios = require('axios');
 const app = express();
@@ -7,8 +5,8 @@ __path = process.cwd();
 const PORT = process.env.PORT || 3000;
 
 const serverUrls = {
-    'server1': 'https://dkfjf-b6b4d439f807.herokuapp.com',
-    'server2': 'https://skdkf-4e567ebf8889.herokuapp.com'
+    'server1': 'https://nextymini2-696c21173684.herokuapp.com',
+    'server2': 'https://netymini-f940694f63ca.herokuapp.com'
 };
 
 // Parse JSON bodies
