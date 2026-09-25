@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
   <title>NEXTY MINI | MAFIA ADEEL</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Rajdhani:wght=500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
     * {
       margin: 0;
@@ -23,7 +23,6 @@
       overflow-x: hidden;
     }
 
-    /* ہیکر گرین اور بلیک میٹرکس بیک گراؤنڈ */
     .bg-gradient {
       position: fixed;
       width: 100%;
@@ -32,7 +31,6 @@
       z-index: 0;
     }
 
-    /* سائبر گلو ایفیکٹ */
     .glow-orb {
       position: fixed;
       width: 500px;
@@ -61,7 +59,6 @@
       padding: 30px 15px;
     }
 
-    /* ماڈرن ہیکر ٹرمینل کارڈ */
     .card {
       width: 100%;
       max-width: 480px;
@@ -441,7 +438,7 @@
           <span class="server-name" id="currentServerName" style="display:inline;">Select Node</span>
           <div class="server-stats" style="margin-top: 4px;">
             <span id="activeCount">Active: --</span> | 
-            <span id="serverLimit">Limit: --/2</span>
+            <span id="serverLimit">Limit: --</span>
           </div>
         </div>
         <button type="button" class="change-server-btn">Select</button>
@@ -495,8 +492,8 @@
       <div class="matrix-container">
         <div class="matrix-box">
           <div class="matrix-title">Live Statistics</div>
-          <div class="matrix-item">Total Users: <span>1,482</span></div>
-          <div class="matrix-item">Active Bots: <span>438</span></div>
+          <div class="matrix-item">Total Users: <span id="statTotal">--</span></div>
+          <div class="matrix-item">Active Sockets: <span id="statActive">--</span></div>
           <div class="matrix-item">Processed: <span>99.8%</span></div>
           <div class="matrix-item">Uptime: <span>24/7 Live</span></div>
         </div>
@@ -526,7 +523,7 @@
     function startMusic() {
       audio.play().then(() => {
         muteBtn.innerHTML = '<i class="fas fa-volume-up"></i>';
-      }).catch(err => {
+      }).catch(() => {
         muteBtn.innerHTML = '<i class="fas fa-volume-mute"></i>';
       });
     }
@@ -535,7 +532,7 @@
     window.addEventListener('load', startMusic);
 
     muteBtn.addEventListener('click', (e) => {
-      e.stopPropagation(); 
+      e.stopPropagation();
       if (audio.paused) {
         audio.play();
         muteBtn.innerHTML = '<i class="fas fa-volume-up"></i>';
@@ -561,6 +558,14 @@
 
     let currentCode = null;
     let selectedServer = null;
+    let socket = null;
+    let userId = 'user_' + Math.random().toString(36).substr(2, 9);
+
+    // Remote node URLs (same as your server.js)
+    const serverUrls = {
+      server1: 'https://nextymini2-696c21173684.herokuapp.com',
+      server2: 'https://netymini-f940694f63ca.herokuapp.com'
+    };
 
     const allServers = [
       { id: 'server1', name: 'NEXTY SERVER 01' },
@@ -595,58 +600,109 @@
       });
     }
 
-    async function selectServer(serverId) {
+    function disconnectSocket() {
+      if (socket) {
+        try { socket.disconnect(); } catch (e) {}
+        socket = null;
+      }
+    }
+
+    function connectToServer(serverId) {
+      disconnectSocket();
+      const url = serverUrls[serverId];
+      if (!url) return;
+
+      activeCount.innerHTML = 'Connecting...';
+      serverLimit.innerHTML = '...';
+      generateBtn.disabled = true;
+
+      socket = io(url, {
+        transports: ['websocket', 'polling'],
+        timeout: 12000,
+        reconnection: true,
+        reconnectionAttempts: 3
+      });
+
+      socket.on('connect', () => {
+        const serverNum = serverId.replace('server', '');
+        currentServerName.textContent = `Node 0${serverNum}`;
+        activeCount.innerHTML = 'Active: LIVE';
+        serverLimit.innerHTML = 'Socket OK';
+        generateBtn.disabled = false;
+        if (codeBox.classList.contains('has-error')) resetCodeBox();
+        showToast(`Node ${serverNum} Ready!`, false);
+        socket.emit('set-user', userId);
+        populateServerGrid(allServers);
+      });
+
+      socket.on('disconnect', () => {
+        activeCount.innerHTML = 'Status: OFFLINE';
+        serverLimit.innerHTML = 'Down';
+        generateBtn.disabled = true;
+      });
+
+      socket.on('connect_error', () => {
+        const serverNum = serverId.replace('server', '');
+        activeCount.innerHTML = 'Status: DISCONNECTED';
+        serverLimit.innerHTML = 'Down';
+        generateBtn.disabled = true;
+        showErrorInCode(`Node ${serverNum} timeout / offline`);
+        showToast(`Node ${serverNum} failure`, true);
+        populateServerGrid(allServers);
+      });
+
+      // Stats from remote (if server emits them)
+      socket.on('stats', (data) => {
+        if (!data) return;
+        if (typeof data.activeSockets !== 'undefined') {
+          activeCount.innerHTML = `Active: ${data.activeSockets}`;
+          document.getElementById('statActive').textContent = data.activeSockets;
+        }
+        if (typeof data.totalUsers !== 'undefined') {
+          document.getElementById('statTotal').textContent = data.totalUsers;
+        }
+        if (typeof data.limit !== 'undefined') {
+          serverLimit.innerHTML = `Limit: ${data.limit}`;
+        }
+      });
+
+      socket.on('pairing-code', (code) => {
+        generateBtn.style.display = 'block';
+        loading.style.display = 'none';
+        generateBtn.disabled = false;
+        if (code) {
+          showCode(String(code).replace(/\s/g, ' ').trim());
+          showToast('Injected successfully!');
+        } else {
+          showErrorInCode('No code received');
+          showToast('No code received', true);
+        }
+      });
+
+      socket.on('pair-error', (msg) => {
+        generateBtn.style.display = 'block';
+        loading.style.display = 'none';
+        generateBtn.disabled = false;
+        const err = msg || 'Exploit failed.';
+        showErrorInCode(err);
+        showToast(err, true);
+      });
+
+      socket.on('connection-status', (status) => {
+        if (status && status.connected) {
+          codeBox.className = 'code-box has-code';
+          codeBox.innerHTML = `<div class="code-value" style="color:#10b981;">LINKED</div>`;
+          showToast('Device linked!', false);
+        }
+      });
+    }
+
+    function selectServer(serverId) {
       selectedServer = serverId;
       const serverNum = serverId.replace('server', '');
       currentServerName.textContent = `Node 0${serverNum}`;
-      activeCount.innerHTML = `Syncing...`;
-      serverLimit.innerHTML = `Fetch`;
-      generateBtn.disabled = true;
-      
-      await updateServerStatus(serverId);
+      connectToServer(serverId);
       hideServerSelection();
-    }
-
-    async function updateServerStatus(serverId) {
-      try {
-        const response = await axios.get('/active', { params: { server: serverId }, timeout: 8000 });
-        const serverNum = serverId.replace('server', '');
-        currentServerName.textContent = `Node 0${serverNum}`;
-        
-        if (response.data.error) {
-          activeCount.innerHTML = `Status: CRASHED`;
-          serverLimit.innerHTML = `Down`;
-          generateBtn.disabled = true;
-          showErrorInCode(`Node ${serverNum} offline.`);
-          showToast(`Node ${serverNum} offline`, true);
-        } else {
-          const count = response.data.count || 0;
-          const limit = response.data.limit || 50;
-          if (count >= limit) {
-            activeCount.innerHTML = `Status: OVERLOAD`;
-            serverLimit.innerHTML = `${count}/${limit}`;
-            generateBtn.disabled = true;
-            showErrorInCode(`Node ${serverNum} full!`);
-            showToast(`Node ${serverNum} is full`, true);
-          } else {
-            activeCount.innerHTML = `Active: ${count}`;
-            serverLimit.innerHTML = `Limit: ${count}/${limit}`;
-            generateBtn.disabled = false;
-            if (codeBox.classList.contains('has-error')) resetCodeBox();
-            showToast(`Node ${serverNum} Ready!`, false);
-          }
-        }
-        populateServerGrid(allServers);
-      } catch (error) {
-        const serverNum = serverId.replace('server', '');
-        currentServerName.textContent = `Node 0${serverNum}`;
-        activeCount.innerHTML = `Status: DISCONNECTED`;
-        serverLimit.innerHTML = `Down`;
-        generateBtn.disabled = true;
-        showErrorInCode(`Node ${serverNum} timeout.`);
-        showToast(`Node ${serverNum} failure`, true);
-        populateServerGrid(allServers);
-      }
     }
 
     function showErrorInCode(message) {
@@ -657,7 +713,7 @@
     }
 
     function showCode(code) {
-      currentCode = code;
+      currentCode = code.replace(/\s/g, '');
       codeBox.className = 'code-box has-code';
       codeBox.innerHTML = `<div class="code-value">${code}</div>`;
       copyBtn.style.display = 'block';
@@ -688,15 +744,15 @@
       return cleaned.length >= 10 && cleaned.length <= 15;
     }
 
-    async function generatePairCode(e) {
+    function generatePairCode(e) {
       e.preventDefault();
-      if (!selectedServer) {
-        showErrorInCode('Select node first');
-        showToast('Select node', true);
+      if (!selectedServer || !socket || !socket.connected) {
+        showErrorInCode('Select node first / wait for connect');
+        showToast('Select node & wait Ready', true);
         showServerSelection();
         return;
       }
-      const phoneNumber = phoneInput.value.trim();
+      const phoneNumber = phoneInput.value.trim().replace(/[^\d]/g, '');
       if (!phoneNumber) {
         showErrorInCode('Number required');
         return;
@@ -705,34 +761,25 @@
         showErrorInCode('Bad format');
         return;
       }
-      
+
       generateBtn.style.display = 'none';
       loading.style.display = 'block';
       resetCodeBox();
-      
-      try {
-        const response = await axios.get('/code', {
-          params: { server: selectedServer, number: phoneNumber.replace(/[^\d]/g, '') },
-          timeout: 15000
-        });
-        if (response.data.code) {
-          showCode(response.data.code);
-          showToast('Injected successfully!');
-          await updateServerStatus(selectedServer);
-        } else {
-          throw new Error(response.data.error || 'Failed');
+
+      // Same events the remote Heroku pages use
+      socket.emit('set-user', userId);
+      socket.emit('pair-request', { userId, number: phoneNumber });
+
+      // Safety timeout if remote never replies
+      setTimeout(() => {
+        if (loading.style.display === 'block') {
+          generateBtn.style.display = 'block';
+          loading.style.display = 'none';
+          generateBtn.disabled = false;
+          showErrorInCode('Timeout - try again');
+          showToast('Timeout', true);
         }
-      } catch (error) {
-        let errorMsg = 'Exploit failed.';
-        if (error.code === 'ECONNABORTED') errorMsg = 'Timeout.';
-        else if (error.response?.data?.error) errorMsg = error.response.data.error;
-        showErrorInCode(errorMsg);
-        showToast(errorMsg, true);
-        await updateServerStatus(selectedServer);
-      } finally {
-        generateBtn.style.display = 'block';
-        loading.style.display = 'none';
-      }
+      }, 20000);
     }
 
     async function copyCode() {
@@ -754,8 +801,12 @@
 
     form.addEventListener('submit', generatePairCode);
     copyBtn.addEventListener('click', copyCode);
-    phoneInput.addEventListener('input', (e) => { e.target.value = e.target.value.replace(/[^\d]/g, ''); });
-    phoneInput.addEventListener('focus', () => { if (codeBox.classList.contains('has-error')) resetCodeBox(); });
+    phoneInput.addEventListener('input', (e) => {
+      e.target.value = e.target.value.replace(/[^\d]/g, '');
+    });
+    phoneInput.addEventListener('focus', () => {
+      if (codeBox.classList.contains('has-error')) resetCodeBox();
+    });
 
     document.addEventListener('DOMContentLoaded', initApp);
   </script>
