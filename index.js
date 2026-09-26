@@ -7,6 +7,7 @@ const PORT = process.env.PORT || 3000;
 const serverUrls = {
     'server1': 'https://nextymini2-696c21173684.herokuapp.com',
     'server2': 'https://netymini-f940694f63ca.herokuapp.com',
+    'server3': 'https://nextymini3-e7eb827e9176.herokuapp.com',
 };
 
 app.use(express.json());
