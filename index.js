@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 const app = express();
 __path = process.cwd();
 const PORT = process.env.PORT || 3000;
@@ -20,15 +21,19 @@ app.get('/servers', (req, res) => {
     res.json({ servers });
 });
 
-// Optional: simple health for this proxy only
-app.get('/active', (req, res) => {
+// Real active/limit count, fetched live from the actual bot server.
+app.get('/active', async (req, res) => {
     const { server } = req.query;
     if (!server || !serverUrls[server]) {
         return res.json({ error: 'Server not found', count: 0, limit: 50 });
     }
-    // Real status comes from Socket.IO on the remote node.
-    // We just confirm the mapping exists so UI does not hard-fail.
-    res.json({ count: 0, limit: 50, url: serverUrls[server], note: 'status via socket' });
+    try {
+        const { data } = await axios.get(`${serverUrls[server]}/active`, { timeout: 5000 });
+        res.json({ count: data.count ?? 0, limit: data.limit ?? 50, url: serverUrls[server] });
+    } catch (e) {
+        // Node unreachable or still booting — say so instead of faking a 0.
+        res.json({ count: 0, limit: 50, url: serverUrls[server], error: 'node unreachable' });
+    }
 });
 
 // Serve HTML
